@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 import h5py
 import numpy as np
@@ -66,13 +66,14 @@ class FastFieldReader:
             self.h5file.close()
             raise Exception(f"Error initializing FastFieldReader: {str(ex)}")
         else:
-            logger.info("FastFieldReader initialized successfully.")
+            logger.info(f"Field loaded successfully.")
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+        logger.info(f"Field closed successfully.")
 
     def close(self):
         if hasattr(self, 'h5file') and self.h5file:
@@ -97,3 +98,25 @@ class FastFieldReader:
             )
             axes.append(axis)
         return axes
+
+    def get_available_fields(self) -> List[str]:
+        return list(self.modes.keys()) if self.is_cylindrical else self.available_fields
+
+    def get_info(self) -> Dict[str, Any]:
+        info = {
+            "file_path": str(self.file_path),
+            "shape": self.shape,
+            "offset": self.offset,
+            "spacing": self.spacing,
+            "timestamps": self.timestamps,
+            "is_cylindrical": self.is_cylindrical,
+            "available_fields": self.get_available_fields(),
+        }
+        if self.is_cylindrical:
+            info["modes"] = self.modes
+        logger.info(f"Path: {info['file_path']}")
+        logger.info(f"Shape: {info['shape']}")
+        logger.info(f"Spacing: {info['spacing']}")
+        logger.info(f"Found {len(info['timestamps'])} timestamps ({info['timestamps'][0]} - {info['timestamps'][-1]})")
+        logger.info(f"Available fields: {info['available_fields']}")
+        return info
