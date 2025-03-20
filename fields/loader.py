@@ -120,3 +120,74 @@ class FastFieldReader:
         logger.info(f"Found {len(info['timestamps'])} timestamps ({info['timestamps'][0]} - {info['timestamps'][-1]})")
         logger.info(f"Available fields: {info['available_fields']}")
         return info
+
+    def get_field_at_time(self, field: str, timestamp: str, subset: Optional[Dict[str, slice]] = None) -> np.ndarray:
+        # Find closest timestep if necessary
+        if timestamp not in self.timestamps:
+            idx = np.argmin(np.abs(self.timestamps.astype(np.float64) - float(timestamp)))
+            timestamp = self.timestamps[idx]
+
+        # Get item for timestep
+        t_idx = list(self.data_items.keys())[list(self.timestamps).index(timestamp)]
+        item = self.data_items[t_idx]
+
+        # Prepare selection
+        if subset is None:
+            selection = tuple(slice(None) for _ in range(len(self.shape)))
+        else:
+            selection = tuple(subset.get(str(i), slice(None)) for i in range(len(self.shape)))
+
+        # Simple field case
+        if field in item:
+            data = np.empty(self.shape)
+            item[field].read_direct(data, source_sel=selection)
+            return data
+
+        # Handle cylindrical fields with modes
+        if self.is_cylindrical and field in self.modes:
+            if subset and "theta" in subset:
+                theta = subset["theta"]
+                data = np.zeros(self.shape)
+                for mode in self.modes[field]:
+                    mode_field = f"{field}_mode_{mode}"
+                    if mode_field not in item:
+                        continue
+                    real_sel = list(selection)
+                    if len(real_sel) > 1:
+                        if isinstance(real_sel[1], slice):
+                            real_sel[1] = slice(
+                                None if real_sel[1].start is None else real_sel[1].start * 2,
+                                None if real_sel[1].stop is None else real_sel[1].stop * 2,
+                                (real_sel[1].step or 1) * 2
+                            )
+                        else:
+                            real_sel[1] = real_sel[1] * 2
+                    real_sel = tuple(real_sel)
+                    real_data = np.empty(self.shape)
+                    item[mode_field].read_direct(real_data, source_sel=real_sel)
+                    data += np.cos(mode * theta) * real_data
+                    if mode > 0:
+                        imag_sel = list(selection)
+                        if len(imag_sel) > 1:
+                            if isinstance(imag_sel[1], slice):
+                                imag_sel[1] = slice(
+                                    (imag_sel[1].start or 0) * 2 + 1,
+                                    None if imag_sel[1].stop is None else imag_sel[1].stop * 2 + 1,
+                                    (imag_sel[1].step or 1) * 2
+                                )
+                            else:
+                                imag_sel[1] = imag_sel[1] * 2 + 1
+                        imag_sel = tuple(imag_sel)
+                        imag_data = np.empty(self.shape)
+                        item[mode_field].read_direct(imag_data, source_sel=imag_sel)
+                        data += np.sin(mode * theta) * imag_data
+                return data
+            else:
+                mode_field = f"{field}_mode_0"
+                if mode_field not in item:
+                    raise ValueError(f"Field {field} mode 0 not found")
+                data = np.empty(self.shape)
+                item[mode_field].read_direct(data, source_sel=selection)
+                return data
+
+        raise ValueError(f"Field {field} not found")
